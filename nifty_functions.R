@@ -136,3 +136,43 @@ generate_regression_plot <- function(model, terms, title, xlab, ylab, color_mode
   
   return(plot)
 }
+
+# Merge MIDUS data
+
+merge_midus_data <- function(dfs,
+                             join_key          = "M2ID",
+                             coalesce_prefixes = NULL,
+                             mke_flag          = TRUE) {
+  # 1. Merge all data frames in the list using a full_join on the join_key
+  merged <- reduce(dfs, full_join, by = join_key)
+  
+  # 2. Define default prefixes that always get coalesced
+  #    and add any user-supplied prefixes
+  default_prefixes <- c("SAMPLMAJ", "M2FAMNUM")
+  all_prefixes <- unique(c(default_prefixes, coalesce_prefixes))
+  
+  # 3. For each prefix, coalesce all columns that start with it into one
+  for (prefix in all_prefixes) {
+    # Collect all columns that start with this prefix
+    cols <- names(select(merged, starts_with(prefix)))
+    
+    # If no columns match this prefix, skip
+    if (length(cols) < 1) next
+    
+    # Create a single coalesced column named exactly the prefix
+    merged <- merged %>%
+      mutate(
+        "{prefix}" := coalesce(!!!syms(cols))
+      ) %>%
+      # Remove the duplicated columns, but keep the newly coalesced column
+      select(-all_of(cols[cols != prefix]))
+  }
+  
+  # 4. If mke_flag == TRUE, create the MKE variable (1 if SAMPLMAJ == 13, else 0)
+  if (mke_flag) {
+    merged <- merged %>%
+      mutate(MKE = if_else(SAMPLMAJ == 13, 1, 0))
+  }
+  
+  merged
+}
