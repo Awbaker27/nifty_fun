@@ -84,8 +84,8 @@ generate_regression_plot <- function(model, terms, title, xlab, ylab, color_mode
       theme(
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
-        plot.title = element_text(size = 14, face = "bold"),
-        axis.title = element_text(size = 12),
+        plot.title = element_text(size = 15, face = "bold"),
+        axis.title = element_text(size = 14),
         axis.text = element_text(size = 10),
         legend.position = "bottom",
         legend.text = element_text(size = 16),
@@ -109,8 +109,8 @@ generate_regression_plot <- function(model, terms, title, xlab, ylab, color_mode
       theme(
         panel.grid.major = element_blank(),
         panel.grid.minor = element_blank(),
-        plot.title = element_text(size = 14, face = "bold"),
-        axis.title = element_text(size = 12),
+        plot.title = element_text(size = 15, face = "bold"),
+        axis.title = element_text(size = 14),
         axis.text = element_text(size = 10),
         legend.position = "bottom",
         legend.text = element_text(size = 16),
