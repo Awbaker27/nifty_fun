@@ -176,3 +176,33 @@ merge_midus_data <- function(dfs,
   
   merged
 }
+
+run_lagged_model <- function(wb_outcome, wb_baseline, relig_var, data, color_mode = "color") {
+  # Create formula
+  formula_str <- paste0(wb_outcome, " ~ ", wb_baseline, " + age_m2 + female_m2 + eduBA_m2 + ",
+                        "married_m2 + working_m2 + nhwb + physhealth_m2 + ", relig_var)
+  model_formula <- as.formula(formula_str)
+
+  # Fit model
+  model <- lm(model_formula, data = data)
+  
+  # Print summary
+  print(summary(model))
+  
+  # Generate readable labels
+  outcome_label <- toupper(wb_outcome)
+  predictor_label <- gsub("_", " ", relig_var)
+  
+  # Generate plot
+  plot <- generate_regression_plot(model,
+                                   terms = relig_var,
+                                   title = paste(outcome_label, "by", predictor_label),
+                                   xlab = predictor_label,
+                                   ylab = outcome_label,
+                                   color_mode = color_mode)
+  
+  print(plot)
+  
+  # Return the model invisibly in case you want to save or extract results
+  invisible(model)
+}
