@@ -177,32 +177,46 @@ merge_midus_data <- function(dfs,
   merged
 }
 
-run_lagged_model <- function(wb_outcome, wb_baseline, relig_var, data, color_mode = "color") {
-  # Create formula
-  formula_str <- paste0(wb_outcome, " ~ ", wb_baseline, " + age_m2 + female_m2 + eduBA_m2 + ",
-                        "married_m2 + working_m2 + nhwb + physhealth_m2 + ", relig_var)
-  model_formula <- as.formula(formula_str)
+run_lagged_model <- function(wb_outcome, wb_baseline, relig_var, data, 
+                             interact_with = NULL, color_mode = "color") {
+  # Build formula string
+  if (!is.null(interact_with)) {
+    formula_str <- paste0(wb_outcome, " ~ ", wb_baseline, " + age_m2 + female_m2 + eduBA_m2 + ",
+                          "married_m2 + working_m2 + physhealth_m2 + ",
+                          relig_var, " * ", interact_with)
+  } else {
+    formula_str <- paste0(wb_outcome, " ~ ", wb_baseline, " + age_m2 + female_m2 + eduBA_m2 + ",
+                          "married_m2 + working_m2 + nhwb + physhealth_m2 + ", relig_var)
+  }
 
+  model_formula <- as.formula(formula_str)
+  
   # Fit model
   model <- lm(model_formula, data = data)
   
   # Print summary
   print(summary(model))
   
-  # Generate readable labels
-  outcome_label <- toupper(wb_outcome)
-  predictor_label <- gsub("_", " ", relig_var)
-  
-  # Generate plot
-  plot <- generate_regression_plot(model,
-                                   terms = relig_var,
-                                   title = paste(outcome_label, "by", predictor_label),
-                                   xlab = predictor_label,
-                                   ylab = outcome_label,
-                                   color_mode = color_mode)
+  # Plot
+  if (!is.null(interact_with)) {
+    plot <- plot_model(model,
+                       type = "int",
+                       terms = c(relig_var, interact_with),
+                       show.data = FALSE) +
+      labs(x = gsub("_", " ", relig_var),
+           y = toupper(wb_outcome),
+           title = paste(toupper(wb_outcome), "by", relig_var, "×", interact_with)) +
+      theme(legend.position = "bottom")
+  } else {
+    plot <- generate_regression_plot(model,
+                                     terms = relig_var,
+                                     title = paste(toupper(wb_outcome), "by", relig_var),
+                                     xlab = gsub("_", " ", relig_var),
+                                     ylab = toupper(wb_outcome),
+                                     color_mode = color_mode)
+  }
   
   print(plot)
   
-  # Return the model invisibly in case you want to save or extract results
   invisible(model)
 }
