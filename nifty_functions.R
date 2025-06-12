@@ -126,9 +126,6 @@ generate_regression_plot <- function(model, terms, title, xlab, ylab, color_mode
       )
   }
   
-  # Print the plot
-  print(plot)
-  
   # Save the plot if a save path is provided
   if (!is.null(save_path)) {
     ggsave(save_path, plot = plot, width = 10, height = 8, dpi = 300)
