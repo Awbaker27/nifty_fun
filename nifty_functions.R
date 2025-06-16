@@ -66,12 +66,11 @@ reverse_code <- function(df, reverse_vars) {
 # Function to compute alpha
 compute_alpha <- function(df) {
   df <- df %>% mutate(across(everything(), as.numeric))
-  df <- df[, sapply(df, function(x) length(unique(na.omit(x))) > 1)]
-  alpha_result <- psych::alpha(df, use = "pairwise.complete.obs")
-
-  # Avoid printing full object (which triggers a plot)
-  print(alpha_result$total)  # only show reliability coefficients
-  return(alpha_result)
+  suppressWarnings({
+    alpha_result <- psych::alpha(df, use = "pairwise.complete.obs", check.keys = FALSE)
+  })
+  print(alpha_result$total)
+  invisible(alpha_result)
 }
 
 
