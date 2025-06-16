@@ -1,33 +1,34 @@
-# Function to combine items from National and Milwaukee datasets
-combine_items <- function(national_vars, milwaukee_vars) {
+# Flexible function to combine National and Milwaukee items from any dataset
+combine_items <- function(national_vars, milwaukee_vars, data) {
   
   # Ensure input vectors are the same length
   if (length(national_vars) != length(milwaukee_vars)) {
     stop("National and Milwaukee variable lists must have the same length.")
   }
   
-  # Extract the first two characters of the National variable name
-  national_prefix <- substr(national_vars, 1, 2)  # Gets "B1" or "C1" from "B1SE1E" or "C1ASH1E"
+  # Extract the first two characters of the National variable name (e.g., "RA1")
+  national_prefix <- substr(national_vars, 1, 3)
   
   # Merge National and Milwaukee variables
   merged_items <- mapply(function(nat, mke) {
-    ifelse(!is.na(d2[, nat]), d2[, nat], d2[, mke])  # Use National if available, otherwise use Milwaukee
+    ifelse(!is.na(data[[nat]]), data[[nat]], data[[mke]])
   }, national_vars, milwaukee_vars, SIMPLIFY = FALSE)
   
   # Convert list to dataframe
   merged_items <- as.data.frame(merged_items)
   
-  # Generate new column names dynamically based on the first two letters of the National variable
-  new_colnames <- paste0(national_prefix, milwaukee_vars)  
+  # Generate dynamic column names
+  new_colnames <- paste0(national_prefix, milwaukee_vars)
   colnames(merged_items) <- new_colnames
   
-  # Handle missing values (keep NA if both National and Milwaukee were NA)
+  # Clean common missing codes
   merged_items <- merged_items %>%
-    mutate_all(~ ifelse(. %in% c(8, -1), NA, .)) %>%
-    mutate_all(as.numeric)
+    mutate(across(everything(), ~ ifelse(. %in% c(8, 98, -1, 999), NA, .))) %>%
+    mutate(across(everything(), as.numeric))
   
   return(merged_items)
 }
+
 
 
 # Function to reverse code selected variables, allowing for both in-place and object assignment
