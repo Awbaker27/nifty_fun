@@ -65,10 +65,15 @@ reverse_code <- function(df, reverse_vars) {
 
 # Function to compute alpha
 compute_alpha <- function(df) {
-  alpha_result <- alpha(df)
-  print(alpha_result)
+  df <- df %>% mutate(across(everything(), as.numeric))
+  df <- df[, sapply(df, function(x) length(unique(na.omit(x))) > 1)]
+  alpha_result <- psych::alpha(df, use = "pairwise.complete.obs")
+
+  # Avoid printing full object (which triggers a plot)
+  print(alpha_result$total)  # only show reliability coefficients
   return(alpha_result)
 }
+
 
 # Function to generate regression plots in the desired format
 generate_regression_plot <- function(model, terms, title, xlab, ylab, color_mode = "color", save_path = NULL) {
