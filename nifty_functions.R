@@ -245,9 +245,3 @@ run_lagged_model <- function(wb_outcome, wb_baseline, relig_var, data,
   
   invisible(model)
 }
-
-
-  print(plot)
-  
-  invisible(model)
-}
