@@ -197,27 +197,56 @@ run_lagged_model <- function(wb_outcome, wb_baseline, relig_var, data,
   model <- lm(model_formula, data = data)
   
   # Print summary
-  print(summary(model))
+  summary_output <- summary(model)
+  print(summary_output)
   
-  # Plot
+  # Get coefficients
+  coefs <- coef(summary_output)
+  
+  # Identify term
   if (!is.null(interact_with)) {
-    plot <- plot_model(model,
-                       type = "int",
-                       terms = c(relig_var, interact_with),
-                       show.data = FALSE) +
-      labs(x = gsub("_", " ", relig_var),
-           y = toupper(wb_outcome),
-           title = paste(toupper(wb_outcome), "by", relig_var, "×", interact_with)) +
-      theme(legend.position = "bottom")
+    # Match interaction term robustly
+    pattern <- paste0(relig_var, ":", interact_with, "|", interact_with, ":", relig_var)
+    matched_terms <- grep(pattern, rownames(coefs), value = TRUE)
+    term_name <- if (length(matched_terms) > 0) matched_terms[1] else NA
   } else {
-    plot <- generate_regression_plot(model,
-                                     terms = relig_var,
-                                     title = paste(toupper(wb_outcome), "by", relig_var),
-                                     xlab = gsub("_", " ", relig_var),
-                                     ylab = toupper(wb_outcome),
-                                     color_mode = color_mode)
+    term_name <- relig_var
+  }
+
+  # Check if term exists and p-value is < 0.05
+  if (!is.na(term_name) && term_name %in% rownames(coefs)) {
+    pval <- coefs[term_name, "Pr(>|t|)"]
+    if (!is.na(pval) && pval < 0.05) {
+      # Generate plot
+      if (!is.null(interact_with)) {
+        plot <- plot_model(model,
+                           type = "int",
+                           terms = c(relig_var, interact_with),
+                           show.data = FALSE) +
+          labs(x = gsub("_", " ", relig_var),
+               y = toupper(wb_outcome),
+               title = paste(toupper(wb_outcome), "by", relig_var, "×", interact_with)) +
+          theme(legend.position = "bottom")
+      } else {
+        plot <- generate_regression_plot(model,
+                                         terms = relig_var,
+                                         title = paste(toupper(wb_outcome), "by", relig_var),
+                                         xlab = gsub("_", " ", relig_var),
+                                         ylab = toupper(wb_outcome),
+                                         color_mode = color_mode)
+      }
+      print(plot)
+    } else {
+      message("Key coefficient not significant; plot not generated.")
+    }
+  } else {
+    message("Key term not found in coefficients; plot not generated.")
   }
   
+  invisible(model)
+}
+
+
   print(plot)
   
   invisible(model)
