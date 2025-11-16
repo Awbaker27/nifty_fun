@@ -245,3 +245,136 @@ run_lagged_model <- function(wb_outcome, wb_baseline, relig_var, data,
   
   invisible(model)
 }
+
+#' Plot LPA/LTA profiles as a radar chart
+#'
+#' @param means   Data frame with at least: class_col, var_col, value_col.
+#' @param indicators Character vector of variable names to include (in order).
+#' @param class_col Name of the class column (default "Class").
+#' @param var_col   Name of the indicator/variable column (default "variable").
+#' @param value_col Name of the value column (default "z_mean").
+#' @param indicator_labels Optional named vector for prettier axis labels.
+#'                         Names = original variable names, values = labels.
+#' @param palette   RColorBrewer palette name (default "Set2").
+#' @param main      Plot title.
+#' @param legend_pos Base R legend position (e.g., "topright").
+#' @param rescale_01 Logical; if TRUE, rescale each indicator 0–1 across classes.
+#'
+#' @return Invisibly returns the data frame sent to radarchart().
+#' @details Requires fmsb, RColorBrewer, dplyr, tidyr, scales.
+plot_radar_profiles <- function(means,
+                                indicators,
+                                class_col   = "Class",
+                                var_col     = "variable",
+                                value_col   = "z_mean",
+                                indicator_labels = NULL,
+                                palette     = "Set2",
+                                main        = NULL,
+                                legend_pos  = "topright",
+                                rescale_01  = TRUE) {
+
+  # --- packages ---
+  requireNamespace("dplyr", quietly = TRUE)
+  requireNamespace("tidyr", quietly = TRUE)
+  requireNamespace("scales", quietly = TRUE)
+  requireNamespace("fmsb", quietly = TRUE)
+  requireNamespace("RColorBrewer", quietly = TRUE)
+
+  df <- means
+
+  # Ensure class is ordered nicely
+  df[[class_col]] <- as.numeric(df[[class_col]])
+  K_current <- length(unique(df[[class_col]]))
+
+  # Default title
+  if (is.null(main)) {
+    main <- paste0(K_current, "-Class Solution")
+  }
+
+  # Filter + reshape to wide: one row per class, columns = indicators
+  df_wide <- df |>
+    dplyr::filter(.data[[var_col]] %in% indicators) |>
+    dplyr::select(
+      Class    = dplyr::all_of(class_col),
+      variable = dplyr::all_of(var_col),
+      value    = dplyr::all_of(value_col)
+    ) |>
+    tidyr::pivot_wider(
+      names_from  = "variable",
+      values_from = "value"
+    ) |>
+    dplyr::arrange(Class)
+
+  # Optionally rescale each indicator 0–1 across classes
+  if (rescale_01) {
+    df_scaled <- df_wide |>
+      dplyr::mutate(
+        dplyr::across(
+          dplyr::all_of(indicators),
+          ~ scales::rescale(.x, to = c(0, 1))
+        )
+      )
+    max_row <- rep(1, length(indicators))
+    min_row <- rep(0, length(indicators))
+  } else {
+    # Use raw scale: set max/min from data (nice if you want z-scale axes)
+    vals    <- dplyr::select(df_wide, dplyr::all_of(indicators))
+    max_row <- apply(vals, 2, max, na.rm = TRUE)
+    min_row <- apply(vals, 2, min, na.rm = TRUE)
+    df_scaled <- df_wide
+  }
+
+  radar_core <- df_scaled[, indicators, drop = FALSE]
+
+  max_min <- rbind(max_row, min_row)
+  colnames(max_min) <- indicators
+
+  radar_data <- rbind(
+    max_min,
+    radar_core
+  )
+
+  # Build colors
+  n_cols <- max(K_current, 3)
+  pal_all <- RColorBrewer::brewer.pal(n_cols, palette)
+  colors  <- pal_all[seq_len(K_current)]
+
+  # Axis labels: optional pretty labels
+  if (!is.null(indicator_labels)) {
+    stopifnot(all(indicators %in% names(indicator_labels)))
+    axis_labels <- unname(indicator_labels[indicators])
+  } else {
+    axis_labels <- indicators
+  }
+
+  # Plot
+  op <- par(mfrow = c(1, 1), mar = c(1, 2, 3, 1))
+
+  fmsb::radarchart(
+    radar_data,
+    axistype = if (rescale_01) 1 else 2,
+    pcol     = colors,
+    plwd     = 2,
+    plty     = 1,
+    cglcol   = "grey80",
+    cglty    = 1,
+    cglwd    = 0.8,
+    vlcex    = 0.9,
+    vlabels  = axis_labels,
+    title    = main
+  )
+
+  legend(
+    legend_pos,
+    legend = paste0("Class ", df_wide$Class),
+    col    = colors,
+    lty    = 1,
+    lwd    = 2,
+    bty    = "n",
+    cex    = 0.8
+  )
+
+  par(op)
+
+  invisible(radar_data)
+}
