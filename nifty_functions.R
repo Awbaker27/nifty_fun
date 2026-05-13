@@ -378,3 +378,358 @@ plot_radar_profiles <- function(means,
 
   invisible(radar_data)
 }
+
+
+
+# MPLUS RELATED FUNCTIONS 
+`%||%` <- function(x, y) if (!is.null(x)) x else y
+
+# ---- Mplus syntax helpers ----------------------------------------------------
+aux_lines_each <- function(vars, tag) {
+  if (!length(vars)) return("")
+  paste0("AUXILIARY = ", vars, " (", tag, ");", collapse = "\n")
+}
+
+wrap_list <- function(keyword, vec, end = ";", width = 78, indent = 2) {
+  if (length(vec) == 0) return("")
+  pad  <- paste0(strrep(" ", indent))
+  line <- paste0(keyword, vec[1])
+  out  <- character(0)
+
+  for (v in vec[-1]) {
+    cand <- paste(line, v)
+    if (nchar(cand) > width) {
+      out <- c(out, line)
+      line <- paste0(pad, v)
+    } else {
+      line <- cand
+    }
+  }
+
+  out <- c(out, paste0(line, " ", end))
+  paste(out, collapse = "\n")
+}
+
+wrap_names_exact <- function(nms) wrap_list("NAMES ARE ", nms)
+wrap_usevars     <- function(ind) wrap_list("USEVARIABLES ARE ", ind)
+
+# ---- U-drive-safe Mplus runner ----------------------------------------------
+run_one <- function(inp, exe = MPLUS_EXE, overwrite = FALSE) {
+  out <- sub("\\.inp$", ".out", inp, ignore.case = TRUE)
+
+  if (!overwrite && file.exists(out)) {
+    message("Skipping (exists): ", basename(out))
+    return(out)
+  }
+
+  wd   <- dirname(inp)
+  cmd  <- "C:\\Windows\\System32\\cmd.exe"
+  args <- c("/c", "cd", "/d", shQuote(wd), "&&", shQuote(exe), shQuote(basename(inp)))
+
+  message("Running: ", paste(c(cmd, args), collapse = " "))
+  status <- system2(command = cmd, args = args, stdout = TRUE, stderr = TRUE)
+
+  if (!file.exists(out)) {
+    warning("No .out created for: ", inp, "\nOutput:\n", paste(status, collapse = "\n"))
+  }
+
+  out
+}
+
+# ---- Basic text utilities ----------------------------------------------------
+read_txt <- function(p) readLines(p, warn = FALSE)
+
+norm_key <- function(s) {
+  s |>
+    toupper() |>
+    gsub("[^A-Z0-9]+", "_", x = _) |>
+    gsub("^_+|_+$", "", x = _)
+}
+
+make_name_map <- function(vars) {
+  full <- toupper(gsub("[^A-Za-z0-9]+", "_", vars))
+  tr8  <- substr(full, 1, 8)
+  nou  <- gsub("_", "", full)
+
+  keys <- c(full, tr8, nou)
+  vals <- c(vars, vars, vars)
+
+  setNames(vals, keys)
+}
+
+# ---- Minimal fit extraction --------------------------------------------------
+extract_fit_text <- function(path) {
+  txt <- read_txt(path)
+
+  grab_num <- function(pattern, last = TRUE) {
+    line <- grep(pattern, txt, value = TRUE, ignore.case = TRUE)
+    if (!length(line)) return(NA_real_)
+    nums <- stringr::str_extract_all(line[1], "-?\\d+\\.\\d+|-?\\d+")[[1]]
+    if (!length(nums)) return(NA_real_)
+    as.numeric(if (last) tail(nums, 1) else nums[1])
+  }
+
+  grab_p_after <- function(pattern) {
+    idx <- grep(pattern, txt, ignore.case = TRUE)
+    if (!length(idx)) return(NA_real_)
+
+    window <- txt[idx[1]:min(length(txt), idx[1] + 12)]
+    p_line <- grep("P-Value", window, value = TRUE, ignore.case = TRUE)
+    if (!length(p_line)) return(NA_real_)
+
+    nums <- stringr::str_extract_all(p_line[length(p_line)], "\\d+\\.\\d+")[[1]]
+    if (!length(nums)) return(NA_real_)
+
+    as.numeric(nums[1])
+  }
+
+  grab_blrt_p <- function() {
+    tech14 <- grep("TECHNICAL 14 OUTPUT", txt, ignore.case = TRUE)
+    if (!length(tech14)) return(NA_real_)
+
+    seg <- txt[tech14[1]:length(txt)]
+    p_line <- grep("Approximate P-Value", seg, value = TRUE, ignore.case = TRUE)
+    if (!length(p_line)) return(NA_real_)
+
+    nums <- stringr::str_extract_all(p_line[1], "\\d+\\.\\d+")[[1]]
+    if (!length(nums)) return(NA_real_)
+
+    as.numeric(nums[1])
+  }
+
+  grab_blrt_warning <- function() {
+    tech14 <- grep("TECHNICAL 14 OUTPUT", txt, ignore.case = TRUE)
+    if (!length(tech14)) return(FALSE)
+
+    seg <- txt[tech14[1]:length(txt)]
+
+    any(grepl(
+      "P-VALUE MAY NOT BE TRUSTWORTHY|LOCAL MAXIMA|NOT A REPLICATED BEST LOGLIKELIHOOD",
+      seg,
+      ignore.case = TRUE
+    ))
+  }
+
+  tibble(
+    file_type = if_else(grepl("BCH", basename(path), ignore.case = TRUE), "BCH", "DCAT"),
+    Classes = as.integer(stringr::str_match(basename(path), "(?i)k(\\d+)")[, 2]),
+    observations = grab_num("^\\s*Number of observations"),
+    ll = grab_num("^\\s*H0 Value"),
+    aic = grab_num("^\\s*Akaike"),
+    bic = grab_num("^\\s*Bayesian"),
+    abic = grab_num("Sample-Size Adjusted BIC"),
+    entropy = grab_num("^\\s*Entropy"),
+    lmr_p = grab_p_after("Lo-Mendell-Rubin Adjusted LRT Test"),
+    blrt_p = grab_blrt_p(),
+    blrt_warning = grab_blrt_warning(),
+    filename = path
+  )
+}
+
+# ---- BCH parser --------------------------------------------------------------
+get_bch_tables <- function(out_path, cont_vars) {
+  txt <- read_txt(out_path)
+
+  b1 <- grep(
+    "EQUALITY TESTS OF MEANS/PROBABILITIES ACROSS CLASSES|EQUALITY TESTS OF MEANS ACROSS CLASSES",
+    txt,
+    ignore.case = TRUE
+  )
+
+  empty <- list(
+    means = tibble(Variable = character(), Class = integer(), Mean = numeric(), SE = numeric()),
+    tests = tibble(Variable = character(), Contrast = character(), ChiSq = numeric(), P = numeric(), df = integer(), Kind = character())
+  )
+
+  if (!length(b1)) return(empty)
+
+  seg <- txt[b1[1]:length(txt)]
+
+  nmap <- make_name_map(cont_vars)
+
+  anchor_idx <- which(vapply(
+    trimws(seg),
+    function(x) norm_key(x) %in% names(nmap),
+    logical(1)
+  ))
+
+  if (!length(anchor_idx)) return(empty)
+
+  blocks <- purrr::map2(
+    anchor_idx,
+    c(anchor_idx[-1] - 1, length(seg)),
+    ~ list(
+      var_full = unname(nmap[[norm_key(seg[.x])]]),
+      text = seg[.x:.y]
+    )
+  )
+
+  parse_means <- function(block) {
+    ln <- block$text
+
+    rx2 <- "^\\s*Class\\s*(\\d+)\\s+([-\\.0-9]+)\\s+([-\\.0-9]+)\\s+Class\\s*(\\d+)\\s+([-\\.0-9]+)\\s+([-\\.0-9]+)"
+    rx1 <- "^\\s*Class\\s*(\\d+)\\s+([-\\.0-9]+)\\s+([-\\.0-9]+)\\s*$"
+
+    two <- str_match(ln, rx2)
+    one <- str_match(ln, rx1)
+
+    pieces <- list()
+
+    if (any(!is.na(two[, 1]))) {
+      two <- two[!is.na(two[, 1]), , drop = FALSE]
+      pieces <- c(pieces, list(
+        tibble(Class = as.integer(two[, 2]), Mean = as.numeric(two[, 3]), SE = as.numeric(two[, 4])),
+        tibble(Class = as.integer(two[, 5]), Mean = as.numeric(two[, 6]), SE = as.numeric(two[, 7]))
+      ))
+    }
+
+    if (any(!is.na(one[, 1]))) {
+      one <- one[!is.na(one[, 1]), , drop = FALSE]
+      pieces <- c(pieces, list(
+        tibble(Class = as.integer(one[, 2]), Mean = as.numeric(one[, 3]), SE = as.numeric(one[, 4]))
+      ))
+    }
+
+    if (!length(pieces)) return(NULL)
+
+    bind_rows(pieces) %>%
+      distinct() %>%
+      arrange(Class) %>%
+      mutate(Variable = block$var_full, .before = 1)
+  }
+
+  parse_tests <- function(block) {
+    ln <- block$text
+
+    rx <- "^\\s*(Overall test|Class\\s*\\d+\\s*vs\\.\\s*\\d+)\\s+([-\\.0-9]+)\\s+([-\\.0-9]+)(?:\\s+(\\d+))?"
+    m <- str_match(ln, rx)
+    m <- m[!is.na(m[, 1]), , drop = FALSE]
+
+    if (!nrow(m)) return(NULL)
+
+    tibble(
+  Variable = block$var_full,
+  Contrast = str_trim(m[, 2]),
+  ChiSq = as.numeric(m[, 3]),
+  P = as.numeric(m[, 4]),
+  df = suppressWarnings(as.integer(m[, 5])),
+  Kind = if_else(grepl("^Overall", Contrast, ignore.case = TRUE), "overall", "pairwise")
+) %>%
+  arrange(Variable, Contrast, desc(!is.na(df))) %>%
+  distinct(Variable, Contrast, .keep_all = TRUE)
+  }
+
+  list(
+    means = map_dfr(blocks, parse_means),
+    tests = map_dfr(blocks, parse_tests)
+  )
+}
+
+# ---- DCAT parser -------------------------------------------------------------
+get_dcat_tables <- function(out_path, cat_vars) {
+  txt <- read_txt(out_path)
+
+  d1 <- grep("EQUALITY TESTS OF MEANS/PROBABILITIES ACROSS CLASSES", txt, ignore.case = TRUE)
+  if (!length(d1)) {
+    return(list(probs = tibble(), tests = tibble()))
+  }
+
+  seg <- txt[d1[1]:length(txt)]
+
+  nmap <- make_name_map(cat_vars)
+  all_caps_idx <- which(grepl("^[A-Z][A-Z0-9_]*\\s*$", trimws(seg)))
+  keep_idx <- all_caps_idx[vapply(
+    all_caps_idx,
+    \(i) norm_key(seg[i]) %in% names(nmap),
+    logical(1)
+  )]
+
+  if (!length(keep_idx)) {
+    return(list(probs = tibble(), tests = tibble()))
+  }
+
+  blocks <- purrr::map2(
+    keep_idx,
+    c(keep_idx[-1] - 1, length(seg)),
+    ~ list(
+      var_full = unname(nmap[[norm_key(seg[.x])]]),
+      text     = seg[.x:.y]
+    )
+  )
+
+  parse_dcat_probs <- function(block) {
+    ln <- block$text
+
+    head_idx <- grep("\\bProb\\b\\s+S\\.E\\.", ln, ignore.case = TRUE)[1]
+    if (is.na(head_idx)) return(NULL)
+
+    chi_idx <- grep("\\bChi-Square\\b\\s+\\bP-Value\\b", ln, ignore.case = TRUE)
+    stop_idx <- if (length(chi_idx)) chi_idx[1] - 1 else min(length(ln), head_idx + 200)
+
+    seg2 <- ln[(head_idx + 1):stop_idx]
+
+    out <- list()
+    cur_class <- NA_integer_
+
+    for (row in seg2) {
+      mc <- stringr::str_match(row, "^\\s*Class\\s*(\\d+)\\s*$")
+      if (!all(is.na(mc))) {
+        cur_class <- as.integer(mc[, 2])
+        next
+      }
+
+      m <- stringr::str_match(
+        row,
+        "^\\s*Category\\s*(\\d+)\\s+([0-9.]+)\\s+([0-9.]+)\\s+([0-9.]+)\\s+([0-9.]+)\\s+([0-9.]+)\\s+([0-9.]+)"
+      )
+
+      if (!all(is.na(m)) && !is.na(cur_class)) {
+        out[[length(out) + 1]] <- tibble(
+          Variable = block$var_full,
+          Class    = cur_class,
+          Category = as.integer(m[, 2]),
+          Prob     = as.numeric(m[, 3]),
+          SE       = as.numeric(m[, 4]),
+          OR       = as.numeric(m[, 5]),
+          OR_SE    = as.numeric(m[, 6]),
+          CI_low   = as.numeric(m[, 7]),
+          CI_high  = as.numeric(m[, 8])
+        )
+      }
+    }
+
+    if (!length(out)) return(NULL)
+    bind_rows(out)
+  }
+
+  parse_dcat_tests <- function(block) {
+    ln <- block$text
+
+    chi_idx <- grep("\\bChi-Square\\b\\s+\\bP-Value\\b", ln, ignore.case = TRUE)
+    if (!length(chi_idx)) return(NULL)
+
+    seg2 <- ln[(chi_idx[1] + 1):min(length(ln), chi_idx[1] + 80)]
+
+    m <- stringr::str_match(
+      seg2,
+      "^\\s*(Overall test|Class\\s*\\d+\\s*vs\\.\\s*\\d+)\\s+([-.0-9]+)\\s+([-.0-9]+)\\s+(\\d+)\\s*$"
+    )
+    m <- m[!is.na(m[, 1]), , drop = FALSE]
+
+    if (!nrow(m)) return(NULL)
+
+    tibble(
+      Variable = block$var_full,
+      Contrast = stringr::str_trim(m[, 2]),
+      ChiSq    = as.numeric(m[, 3]),
+      P        = as.numeric(m[, 4]),
+      df       = as.integer(m[, 5])
+    ) |>
+      mutate(Kind = if_else(grepl("^Overall", Contrast, ignore.case = TRUE), "overall", "pairwise"))
+  }
+
+  list(
+    probs = map_dfr(blocks, parse_dcat_probs),
+    tests = map_dfr(blocks, parse_dcat_tests)
+  )
+}
